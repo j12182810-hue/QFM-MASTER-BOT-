@@ -1,0 +1,1 @@
+function analyzeMarketStructure(candles1h: Candle[], candles5m: Candle[], candles1m: Candle[], pair: string, type: string): { signal: Signal | null, logs: string[] }

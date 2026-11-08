@@ -1,0 +1,8 @@
+{
+  "name": "QFM MASTER BOT",
+  "description": "QFM MASTER VIP Signals Bot. Employs the multi-timeframe order block strategy to find high-probability trade setups on liquid pairs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

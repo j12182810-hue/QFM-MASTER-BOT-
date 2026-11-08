@@ -1,0 +1,11 @@
+{
+  "total_trades": 256,
+  "win_count": 4,
+  "loss_count": 47,
+  "be_count": 205,
+  "win_rate": 1.56,
+  "avg_winning_rr": 185.0,
+  "max_rr_achieved": 250.0,
+  "net_r": 693.0,
+  "profit_factor": 15.74
+}

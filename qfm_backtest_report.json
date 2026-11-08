@@ -1,0 +1,15 @@
+{
+  "asset": "BTC/USDT",
+  "period": "3 Years (1095 Days)",
+  "timeframes_analyzed": "D1, H4, H1, M1",
+  "total_setups": 137,
+  "wins": 62,
+  "losses": 68,
+  "break_evens": 7,
+  "win_rate_pct": 45.26,
+  "avg_winning_rr": 5.56,
+  "max_rr_achieved": 18.5,
+  "profit_factor": 5.07,
+  "net_r_multiple": 276.45,
+  "strategy_author": "QFM ANALYTICS"
+}

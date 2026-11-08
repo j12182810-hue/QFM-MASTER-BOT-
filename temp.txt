@@ -1,0 +1,1101 @@
+import "./error-logger";
+import express from "express";
+import path from "path";
+import axios from "axios";
+import yahooFinance from "yahoo-finance2";
+import { createServer as createViteServer } from "vite";
+
+const app = express();
+const PORT = 3000;
+
+app.use(express.json());
+
+// Pair Definitions
+const CRYPTO_PAIRS = [
+  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "TRXUSDT",
+  "TONUSDT", "DOTUSDT", "MATICUSDT", "SHIBUSDT", "AVAXUSDT", "LINKUSDT", "BCHUSDT", "LTCUSDT",
+  "NEARUSDT", "ALGOUSDT", "ATOMUSDT", "UNIUSDT", "XLMUSDT", "XMRUSDT", "ETCUSDT", "ICPUSDT",
+  "VETUSDT", "FILUSDT", "APEUSDT", "SANDUSDT", "MANAUSDT", "THETAUSDT", "EGLDUSDT", "FTMUSDT",
+  "HBARUSDT", "QNTUSDT", "GRTUSDT", "CHZUSDT", "XTZUSDT", "EOSUSDT", "ZECUSDT", "AAVEUSDT",
+  "MKRUSDT", "RUNEUSDT", "SNXUSDT", "COMPUSDT", "DASHUSDT", "KSMUSDT", "CRVUSDT", "1INCHUSDT",
+  "GALAUSDT", "ENJUSDT", "LRCUSDT", "CELOUSDT", "ARUSDT", "GMXUSDT", "LDOUSDT", "OPUSDT", "APTUSDT", "XEMUSDT"
+];
+
+const FOREX_PAIRS = [
+  "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
+  "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURAUD=X", "EURNZD=X", "EURCAD=X",
+  "GBPJPY=X", "GBPCHF=X", "GBPAUD=X", "GBPCAD=X", "GBPNZD=X",
+  "AUDJPY=X", "AUDCHF=X", "AUDCAD=X", "AUDNZD=X",
+  "CADJPY=X", "CADCHF=X",
+  "NZDJPY=X", "NZDCHF=X", "NZDCAD=X",
+  "CHFJPY=X", "ZAR=X", "MXN=X", "SGD=X", "HKD=X", "SEK=X", "NOK=X", "DKK=X", "TRY=X"
+];
+
+const COMMODITY_PAIRS = [
+  "GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "PA=F", "PL=F", 
+  "ZC=F", "ZW=F", "ZS=F", "KC=F", "SB=F", "CT=F", "CC=F", "ALI=F"
+];
+
+const INDEX_PAIRS = [
+  "^GSPC", "^IXIC", "^DJI", "^RUT", "^FTSE", "^GDAXI", "^FCHI", 
+  "^N225", "^HSI", "^AXJO", "^STOXX50E", "^AEX", "^IBEX"
+];
+
+const STOCK_PAIRS = [
+  "AAPL", "MSFT", "NVDA", "TSLA", "META", "AMZN", "GOOGL", "BRK-B", "UNH", "LLY",
+  "JPM", "V", "JNJ", "XOM", "WMT", "PG", "MA", "HD", "CVX", "MRK",
+  "ABBV", "KO", "PEP", "COST", "BAC", "AVGO", "TMO", "CSCO", "MCD", "CRM",
+  "ACN", "ABT", "LIN", "DIS", "ADBE", "DHR", "TXN", "AMD", "INTC", "PFE",
+  "NFLX", "NKE", "PM", "RTX", "WFC", "HON", "QCOM", "IBM", "UNP", "BA",
+  "AMGN", "GE", "COP", "LOW", "SPGI", "INTU", "CAT", "GS", "SYK", "BLK",
+  "ELV", "PLD", "MS", "MTD", "NOW", "AXP", "ISRG", "BKNG", "C", "MDT",
+  "TJX", "T", "REGN", "VRTX", "PGR", "SCHW", "AMT", "SYY", "CHTR", "NEE",
+  "CB", "SLB", "GILD", "BDX", "MMC", "FI", "LMT", "ZTS", "MO", "BSX",
+  "PNC", "ETN", "CSX", "TGT", "HUM", "ADSK", "SO", "ITW", "SHW", "DUK"
+];
+
+interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  takerBuyBaseVolume?: number; 
+}
+
+interface SupplyDemandZone {
+  type: "BULLISH" | "BEARISH";
+  top: number;
+  bottom: number;
+  mitigated: boolean;
+  time: number;
+  extremePriceReached: number;
+  timeframe?: string;
+}
+
+interface FVG {
+  type: "BULLISH" | "BEARISH";
+  top: number;
+  bottom: number;
+  time: number;
+  inverted: boolean;
+}
+
+interface Signal {
+  pair: string;
+  name: string;
+  type: string; // Crypto, Forex, etc.
+  action: "BUY" | "SELL";
+  entryZone: [number, number];
+  stopLoss: number;
+  takeProfit: number;
+  currentPrice: number;
+  confidence: number;
+  time: number;
+  rrRatio?: number;
+  layer1Bias?: string;
+  layer2Zone?: string;
+  layer25RR?: string;
+  layer3Confirm?: string;
+  layer4Filter?: string;
+  layer5Exec?: string;
+  volumeProfileConfirmed?: boolean;
+  hvnPrice?: number;
+  orderFlowConfirmed?: boolean;
+  gexConfirmed?: boolean;
+  netGex?: number;
+  gexPinPrice?: number;
+  dailyTrend?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  fourHourZone?: string;
+  oneHourTrigger?: string;
+  fiveMinuteVerified?: boolean;
+  orderBlockConfirmed?: boolean;
+  orderBlockDetails?: string;
+  amdPhase?: string;
+  amdPattern?: string;
+  vwapAlignment?: string;
+  liquiditySweep?: string;
+}
+
+function aggregateByTime(candles: Candle[], timeframe: "4h" | "1d"): Candle[] {
+  const result: Candle[] = [];
+  let currentCandle: any = null;
+  let currentKey = "";
+
+  for (const quote of candles) {
+    const d = new Date(quote.time);
+    let key = "";
+    if (timeframe === "4h") {
+      // Group by 4-hour block in UTC
+      const block = Math.floor(d.getUTCHours() / 4);
+      key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}-${block}`;
+    } else if (timeframe === "1d") {
+      // Group by Day in UTC
+      key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    }
+
+    if (key !== currentKey) {
+      if (currentCandle) result.push(currentCandle);
+      currentCandle = { ...quote };
+      currentKey = key;
+    } else {
+      currentCandle.high = Math.max(currentCandle.high, quote.high);
+      currentCandle.low = Math.min(currentCandle.low, quote.low);
+      currentCandle.close = quote.close;
+      currentCandle.volume += quote.volume || 0;
+    }
+  }
+  if (currentCandle) result.push(currentCandle);
+  return result;
+}
+
+const pairNames: Record<string, string> = {
+  // Crypto
+  "BTCUSDT": "Bitcoin", "ETHUSDT": "Ethereum", "SOLUSDT": "Solana", "BNBUSDT": "Binance Coin", 
+  "XRPUSDT": "Ripple", "ADAUSDT": "Cardano", "DOGEUSDT": "Dogecoin", "AVAXUSDT": "Avalanche",
+  "LINKUSDT": "Chainlink", "XLMUSDT": "Stellar", "STORJUSDT": "Storj", "SANDUSDT": "The Sandbox",
+  "THETAUSDT": "Theta", "TRXUSDT": "TRON", "VETUSDT": "VeChain", "YFIUSDT": "yearn.finance",
+  "ZECUSDT": "Zcash", "ZILUSDT": "Zilliqa", "MANAUSDT": "Decentraland", "ICPUSDT": "Internet Computer",
+  "LTCUSDT": "Litecoin", "MASKUSDT": "Mask Network", "NEARUSDT": "NEAR Protocol", "NEOUSDT": "NEO",
+  "DOTUSDT": "Polkadot", "QTUMUSDT": "Qtum", "STXUSDT": "Stacks", "BCHUSDT": "Bitcoin Cash",
+  "CHZUSDT": "Chiliz", "AAVEUSDT": "Aave", "ALGOUSDT": "Algorand", "COMPUSDT": "Compound",
+  // Forex
+  "AUDCAD=X": "AUD/CAD", "AUDCHF=X": "AUD/CHF", "AUDJPY=X": "AUD/JPY", "AUDNZD=X": "AUD/NZD", "AUDUSD=X": "AUD/USD",
+  "CADCHF=X": "CAD/CHF", "CADJPY=X": "CAD/JPY", "CHFJPY=X": "CHF/JPY",
+  "EURAUD=X": "EUR/AUD", "EURCAD=X": "EUR/CAD", "EURCHF=X": "EUR/CHF", "EURGBP=X": "EUR/GBP", "EURJPY=X": "EUR/JPY", 
+  "EURMXN=X": "EUR/MXN", "EURNZD=X": "EUR/NZD", "EURPLN=X": "EUR/PLN", "EURSGD=X": "EUR/SGD", "EURZAR=X": "EUR/ZAR",
+  "GBPAUD=X": "GBP/AUD", "GBPCAD=X": "GBP/CAD", "GBPCHF=X": "GBP/CHF", "GBPJPY=X": "GBP/JPY", "GBPNOK=X": "GBP/NOK", 
+  "GBPNZD=X": "GBP/NZD", "GBPSEK=X": "GBP/SEK", "GBPSGD=X": "GBP/SGD", "GBPUSD=X": "GBP/USD", "GBPZAR=X": "GBP/ZAR",
+  "NZDCAD=X": "NZD/CAD", "NZDCHF=X": "NZD/CHF", "NZDJPY=X": "NZD/JPY", "NZDUSD=X": "NZD/USD",
+  "USDCAD=X": "USD/CAD", "USDCHF=X": "USD/CHF", "USDCNH=X": "USD/CNH", "USDCZK=X": "USD/CZK", "USDDKK=X": "USD/DKK", 
+  "USDHKD=X": "USD/HKD", "USDHUF=X": "USD/HUF", "USDILS=X": "USD/ILS", "USDJPY=X": "USD/JPY", "USDKRW=X": "USD/KRW", 
+  "USDMXN=X": "USD/MXN", "USDNOK=X": "USD/NOK", "USDPLN=X": "USD/PLN", "USDSEK=X": "USD/SEK", "USDSGD=X": "USD/SGD", "USDZAR=X": "USD/ZAR",
+  // Commodities
+  "GC=F": "Gold", "SI=F": "Silver", "PA=F": "Palladium", "PL=F": "Platinum", "CL=F": "Crude Oil", "NG=F": "Natural Gas", "BZ=F": "Brent Crude",
+  "XAUUSD": "Gold", "XAGUSD": "Silver", "XPDUSD": "Palladium", "XPTUSD": "Platinum", "USOIL": "Crude Oil", "NATGAS": "Natural Gas", "UKBRENT": "Brent Crude",
+  // Indices
+  "^GSPC": "S&P 500", "^DJI": "Dow Jones", "^IXIC": "NASDAQ", "^AXJO": "AUS 200", "^FCHI": "CAC 40", 
+  "^GDAXI": "DAX 40", "^STOXX50E": "EURO STOXX 50", "^FTSE": "FTSE 100", "^HSI": "Hang Seng", "^N225": "Nikkei 225", "^IBEX": "IBEX 35",
+  "US500": "S&P 500", "US30": "Dow Jones", "NAS100": "NASDAQ", "AUS200": "AUS 200", "CAC40": "CAC 40",
+  "DAX40": "DAX 40", "EUROSTOXX50": "EURO STOXX 50", "UK100": "FTSE 100", "HK50": "Hang Seng", "JPN225": "Nikkei 225", "SPAIN35": "IBEX 35",
+  // Stocks
+  "MMM": "3M", "ABT": "Abbott", "ABBV": "AbbVie", "ADS.DE": "Adidas", "AGNC": "AGNC Invest", "AA": "Alcoa", "BABA": "Alibaba", "GOOGL": "Alphabet", 
+  "MO": "Altria", "AMZN": "Amazon", "AXP": "Amex", "AMGN": "Amgen", "AAPL": "Apple", "ADM": "ADM", "ASML": "ASML", "T": "AT&T", "ADP": "ADP", 
+  "BA.L": "BAE Systems", "BAC": "Bank of America", "BARC.L": "Barclays", "BAYN.DE": "Bayer", "BMW.DE": "BMW", "BB": "BlackBerry", "BA": "Boeing", 
+  "BKNG": "Booking", "BATS.L": "BAT", "BLND.L": "British Land", "AVGO": "Broadcom", "BT-A.L": "BT Group", "BRBY.L": "Burberry", "CAT": "Caterpillar", 
+  "CVX": "Chevron", "CSCO": "Cisco", "C": "Citigroup", "CLX": "Clorox", "KO": "Coca-Cola", "COIN": "Coinbase", "CL": "Colgate", "STZ": "Constellation", 
+  "CON.DE": "Continental"
+};
+
+function getFullName(pair: string): string {
+  return pairNames[pair] || pair;
+}
+
+function findTrueLiquidityPools(candles: Candle[]): SupplyDemandZone[] {
+  const pools: SupplyDemandZone[] = [];
+  if (candles.length < 15) return pools;
+  
+  // First, find all swing highs and swing lows with their indices
+  const swings: { type: 'HIGH' | 'LOW', price: number, idx: number, time: number }[] = [];
+  for (let i = 2; i < candles.length - 2; i++) {
+      const c = candles[i];
+      const isHigh = c.high > candles[i-1].high && c.high > candles[i+1].high && c.high > candles[i-2].high && c.high > candles[i+2].high;
+      const isLow = c.low < candles[i-1].low && c.low < candles[i+1].low && c.low < candles[i-2].low && c.low < candles[i+2].low;
+      
+      if (isHigh) swings.push({ type: 'HIGH', price: c.high, idx: i, time: c.time });
+      if (isLow) swings.push({ type: 'LOW', price: c.low, idx: i, time: c.time });
+  }
+  
+  for (let i = 0; i < swings.length; i++) {
+      const currentSwing = swings[i];
+      
+      if (currentSwing.type === 'HIGH') {
+          // Find the most recent swing low BEFORE this high
+          let prevLow = -1;
+          for (let j = i - 1; j >= 0; j--) {
+              if (swings[j].type === 'LOW') {
+                  prevLow = swings[j].price;
+                  break;
+              }
+          }
+          if (prevLow !== -1) {
+              // Did price break this prevLow AFTER this high?
+              let brokeLow = false;
+              for (let k = currentSwing.idx + 1; k < candles.length; k++) {
+                  if (candles[k].low < prevLow) {
+                      brokeLow = true;
+                      break;
+                  }
+                  if (candles[k].high > currentSwing.price) {
+                      break; // Swept before breaking the low
+                  }
+              }
+              if (brokeLow) {
+                  // A bearish pool (liquidity above a high that broke structure down)
+                  pools.push({ type: "BEARISH", top: currentSwing.price, bottom: currentSwing.price - (currentSwing.price * 0.0002), mitigated: false, time: currentSwing.time, extremePriceReached: currentSwing.price });
+              }
+          }
+      } else if (currentSwing.type === 'LOW') {
+          // Find the most recent swing high BEFORE this low
+          let prevHigh = -1;
+          for (let j = i - 1; j >= 0; j--) {
+              if (swings[j].type === 'HIGH') {
+                  prevHigh = swings[j].price;
+                  break;
+              }
+          }
+          if (prevHigh !== -1) {
+              // Did price break this prevHigh AFTER this low?
+              let brokeHigh = false;
+              for (let k = currentSwing.idx + 1; k < candles.length; k++) {
+                  if (candles[k].high > prevHigh) {
+                      brokeHigh = true;
+                      break;
+                  }
+                  if (candles[k].low < currentSwing.price) {
+                      break; // Swept before breaking the high
+                  }
+              }
+              if (brokeHigh) {
+                  // A bullish pool (liquidity below a low that broke structure up)
+                  pools.push({ type: "BULLISH", top: currentSwing.price + (currentSwing.price * 0.0002), bottom: currentSwing.price, mitigated: false, time: currentSwing.time, extremePriceReached: currentSwing.price });
+              }
+          }
+      }
+  }
+  
+  return pools;
+}
+
+function findOrderBlocks(candles: Candle[]): SupplyDemandZone[] {
+  if (candles.length < 15) return [];
+  const trueRanges = [];
+  for (let i = 1; i < candles.length; i++) {
+     const h = candles[i].high, l = candles[i].low, pc = candles[i-1].close;
+     trueRanges.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
+  }
+  const atr = trueRanges.slice(-14).reduce((a, b) => a + b, 0) / Math.min(14, trueRanges.length);
+
+  let obs: SupplyDemandZone[] = [];
+  // Need at least 3 candles to confirm an FVG after the OB
+  for (let i = 1; i < candles.length - 2; i++) {
+    const prevCandle = candles[i - 1]; // OB candle
+    const candle1 = candles[i]; // Expansion candle 1
+    const candle2 = candles[i + 1]; // Expansion candle 2
+    
+    const bodySize = Math.abs(candle1.close - candle1.open);
+    const hasDisplacement = bodySize > (atr * 0.8); // Strict displacement
+    
+    // Bullish OB
+    if (candle1.close > candle1.open && hasDisplacement && prevCandle.close <= prevCandle.open) {
+      // Check for FVG between prevCandle and candle2
+      if (prevCandle.high < candle2.low) {
+        obs.push({ type: "BULLISH", top: prevCandle.high, bottom: prevCandle.low, mitigated: false, time: prevCandle.time, extremePriceReached: candle2.high });
+      }
+    }
+    
+    // Bearish OB
+    if (candle1.close < candle1.open && hasDisplacement && prevCandle.close >= prevCandle.open) {
+      // Check for FVG between prevCandle and candle2
+      if (prevCandle.low > candle2.high) {
+        obs.push({ type: "BEARISH", top: prevCandle.high, bottom: prevCandle.low, mitigated: false, time: prevCandle.time, extremePriceReached: candle2.low });
+      }
+    }
+  }
+  return obs;
+}
+
+function findFvgs(candles: Candle[]): FVG[] {
+  const fvgs: FVG[] = [];
+  for (let i = 2; i < candles.length; i++) {
+    const c1 = candles[i - 2];
+    const c3 = candles[i];
+    if (c1.high < c3.low) {
+      fvgs.push({ type: "BULLISH", top: c3.low, bottom: c1.high, time: c1.time, inverted: false });
+    } else if (c1.low > c3.high) {
+      fvgs.push({ type: "BEARISH", top: c1.low, bottom: c3.high, time: c1.time, inverted: false });
+    }
+  }
+  return fvgs;
+}
+
+interface VolumeBin {
+  low: number;
+  high: number;
+  volume: number;
+}
+
+function calculateVolumeProfile(candles: Candle[], numBins: number = 50): { bins: VolumeBin[], pocPrice: number, avgVolume: number } {
+  if (candles.length === 0) return { bins: [], pocPrice: 0, avgVolume: 0 };
+  
+  let minPrice = Infinity;
+  let maxPrice = -Infinity;
+  for (const c of candles) {
+    if (c.low < minPrice) minPrice = c.low;
+    if (c.high > maxPrice) maxPrice = c.high;
+  }
+
+  if (minPrice === maxPrice) {
+    minPrice -= 1;
+    maxPrice += 1;
+  }
+
+  const binSize = (maxPrice - minPrice) / numBins;
+  const bins: VolumeBin[] = Array.from({ length: numBins }, (_, i) => ({
+    low: minPrice + i * binSize,
+    high: minPrice + (i + 1) * binSize,
+    volume: 0,
+  }));
+
+  // Distribute each candle's volume into bins that overlap its [low, high] price range
+  for (const c of candles) {
+    const vol = c.volume || 1;
+    const cLow = c.low;
+    const cHigh = c.high;
+    const cRange = cHigh - cLow;
+
+    if (cRange === 0) {
+      const binIdx = Math.min(numBins - 1, Math.max(0, Math.floor((cLow - minPrice) / binSize)));
+      bins[binIdx].volume += vol;
+      continue;
+    }
+
+    for (const bin of bins) {
+      const overlapLow = Math.max(bin.low, cLow);
+      const overlapHigh = Math.min(bin.high, cHigh);
+      if (overlapHigh > overlapLow) {
+        const fraction = (overlapHigh - overlapLow) / cRange;
+        bin.volume += vol * fraction;
+      }
+    }
+  }
+
+  let maxVol = -1;
+  let pocBinIdx = 0;
+  let totalVolume = 0;
+  for (let i = 0; i < bins.length; i++) {
+    totalVolume += bins[i].volume;
+    if (bins[i].volume > maxVol) {
+      maxVol = bins[i].volume;
+      pocBinIdx = i;
+    }
+  }
+  const pocPrice = (bins[pocBinIdx].low + bins[pocBinIdx].high) / 2;
+  const avgVolume = totalVolume / numBins;
+
+  return { bins, pocPrice, avgVolume };
+}
+
+interface GexPoint {
+  price: number;
+  gexValue: number;
+  type: "CALL" | "PUT" | "NET";
+}
+
+function calculateGammaExposure(
+  candles: Candle[],
+  currentPrice: number,
+  atr: number
+): { netGexAtCurrent: number; gexProfile: GexPoint[]; pinPrice: number; isPositiveGexZone: boolean } {
+  if (candles.length === 0) {
+    return { netGexAtCurrent: 0, gexProfile: [], pinPrice: currentPrice, isPositiveGexZone: true };
+  }
+
+  // Option strike prices are centered around major round numbers.
+  let step = Math.pow(10, Math.floor(Math.log10(currentPrice))) / 10;
+  if (step === 0) step = 0.01;
+
+  // Refine step sizes to be realistic depending on the asset price
+  if (currentPrice > 40000) step = 1000;       // BTC
+  else if (currentPrice > 1500) step = 100;    // ETH, Gold
+  else if (currentPrice > 100) step = 10;      // Stocks
+  else if (currentPrice > 1) step = 1;         // FX, low stocks
+  else step = 0.01;                            // Low crypto / minor pairs
+
+  const strikes: number[] = [];
+  const minStrike = Math.floor((currentPrice - 8 * atr) / step) * step;
+  const maxStrike = Math.ceil((currentPrice + 8 * atr) / step) * step;
+
+  for (let strike = minStrike; strike <= maxStrike; strike += step) {
+    if (strike > 0) strikes.push(strike);
+  }
+
+  const gexProfile: GexPoint[] = [];
+  let netGexAtCurrent = 0;
+  let maxNetGex = -Infinity;
+  let pinPrice = currentPrice;
+
+  // Implied Volatility proxy derived from standard deviation of the last 30 periods
+  const last30 = candles.slice(-30);
+  const closes = last30.map(c => c.close);
+  const mean = closes.reduce((a, b) => a + b, 0) / closes.length;
+  const variance = closes.reduce((sum, c) => sum + Math.pow(c - mean, 2), 0) / closes.length;
+  const sd = Math.sqrt(variance);
+  const iv = (sd / currentPrice) * Math.sqrt(365); // simple annualized IV estimate, minimum 10%
+  const finalIv = Math.max(0.10, isNaN(iv) ? 0.30 : iv);
+
+  for (const strike of strikes) {
+    // Standard normal distribution PDF for gamma calculation
+    const T = 0.08; // ~30 days to expiration in years
+    const d1 = (Math.log(currentPrice / strike) + (0.5 * finalIv * finalIv) * T) / (finalIv * Math.sqrt(T));
+    const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+    const gamma = pdf / (currentPrice * finalIv * Math.sqrt(T));
+
+    // Open Interest multiplier for round numbers & supply/demand touchpoints
+    let oiMultiplier = 1.0;
+    if (Math.abs(strike % (step * 5)) < 1e-6 || Math.abs(strike % (step * 10)) < 1e-6) {
+      oiMultiplier = 2.5; // major mental/institutional level
+    }
+
+    // High cluster zones in price action attract higher open interest
+    let touches = 0;
+    for (const c of candles.slice(-60)) {
+      if (strike >= c.low && strike <= c.high) {
+        touches++;
+      }
+    }
+    oiMultiplier += touches * 0.15;
+
+    // Call open interest dominates above current, put open interest dominates below
+    const isCallDominated = strike >= currentPrice;
+    const callOi = isCallDominated ? 1200 * oiMultiplier : 250 * oiMultiplier;
+    const putOi = !isCallDominated ? 1400 * oiMultiplier : 200 * oiMultiplier;
+
+    // Net dealer gamma exposure: long calls (positive) and short puts (negative)
+    const callGex = callOi * gamma * currentPrice * currentPrice * 0.0001;
+    const putGex = -putOi * gamma * currentPrice * currentPrice * 0.0001;
+    const netGex = callGex + putGex;
+
+    gexProfile.push({ price: strike, gexValue: netGex, type: "NET" });
+
+    // Sum GEX close to the current price
+    if (Math.abs(currentPrice - strike) < step * 0.8) {
+      netGexAtCurrent += netGex;
+    }
+
+    if (netGex > maxNetGex) {
+      maxNetGex = netGex;
+      pinPrice = strike;
+    }
+  }
+
+  const isPositiveGexZone = netGexAtCurrent >= 0;
+
+  return {
+    netGexAtCurrent,
+    gexProfile,
+    pinPrice,
+    isPositiveGexZone
+  };
+}
+
+function calculateDailyVwap(candles: Candle[]): number | null {
+  if (candles.length === 0) return null;
+  const currentDayStr = new Date(candles[candles.length - 1].time).toISOString().split('T')[0];
+  
+  let cumulativeVP = 0;
+  let cumulativeVol = 0;
+  
+  for (const candle of candles) {
+    const candleDayStr = new Date(candle.time).toISOString().split('T')[0];
+    if (candleDayStr === currentDayStr) {
+      const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+      cumulativeVP += typicalPrice * candle.volume;
+      cumulativeVol += candle.volume;
+    }
+  }
+  
+  if (cumulativeVol === 0) return null;
+  return cumulativeVP / cumulativeVol;
+}
+
+function checkLiquiditySweeps(candles4h: Candle[], currentPrice: number): { type: "BULLISH_SWEEP" | "BEARISH_SWEEP" | "NONE", description: string } {
+  if (candles4h.length < 2) return { type: "NONE", description: "" };
+  
+  const prev4h = candles4h[candles4h.length - 2];
+  const p4hHigh = prev4h.high;
+  const p4hLow = prev4h.low;
+  
+  const current4h = candles4h[candles4h.length - 1];
+  
+  if (current4h.low < p4hLow && currentPrice > p4hLow) {
+     return { type: "BULLISH_SWEEP", description: `Swept Previous 4H Low (${p4hLow.toFixed(5)}) and reclaimed` };
+  }
+  
+  if (current4h.high > p4hHigh && currentPrice < p4hHigh) {
+     return { type: "BEARISH_SWEEP", description: `Swept Previous 4H High (${p4hHigh.toFixed(5)}) and rejected` };
+  }
+  
+  return { type: "NONE", description: "" };
+}
+
+// Sniper Elite Quantum Precision Strategy Engine
+function analyzeMarketStructure(candles: Candle[], candles1d: Candle[], pair: string, type: string): { signal: Signal | null, logs: string[] } {
+  const logs: string[] = [];
+  if (candles.length < 50) return { signal: null, logs: [`[${pair}] Not enough data`] };
+
+  const currentCandle = candles[candles.length - 1];
+  const currentPrice = currentCandle.close;
+
+  const lookback = 15; // Major trend bases
+  const swings = findSwings(candles, lookback);
+  const htf = analyzeHTF(candles1d);
+
+  let bestSignal: Signal | null = null;
+  
+  // STRATEGY: Liquidity Sweep + Market Structure Shift (MSS) + Order Block (OB) Return
+
+  // 1. Look for Bearish Setup (Sell)
+  for (let i = swings.highs.length - 1; i >= 1; i--) {
+      const currentHigh = swings.highs[i];
+      const prevHigh = swings.highs[i - 1]; // Previous high to sweep
+      
+      // Check if currentHigh swept the prevHigh
+      if (currentHigh.val > prevHigh.val) {
+          // Swept liquidity. Look for MSS
+          let interveningLowIdx = -1;
+          let interveningLowVal = Infinity;
+          for (let j = prevHigh.idx; j < currentHigh.idx; j++) {
+              if (candles[j].low < interveningLowVal) {
+                  interveningLowVal = candles[j].low;
+                  interveningLowIdx = j;
+              }
+          }
+          
+          if (interveningLowIdx !== -1) {
+              // Find if price broke below this intervening low (MSS) after currentHigh
+              let mssCandleIdx = -1;
+              for (let j = currentHigh.idx + 1; j < candles.length - 1; j++) {
+                  if (candles[j].close < interveningLowVal) {
+                      mssCandleIdx = j;
+                      break;
+                  }
+              }
+              
+              if (mssCandleIdx !== -1) {
+                  // MSS confirmed! Now find the Bearish OB
+                  let obIdx = -1;
+                  for (let j = currentHigh.idx; j <= mssCandleIdx; j++) {
+                      if (candles[j].close > candles[j].open) { // Bullish candle
+                          obIdx = j;
+                      } else if (obIdx !== -1) {
+                          break; 
+                      }
+                  }
+                  
+                  if (obIdx !== -1) {
+                      const obHigh = candles[obIdx].high;
+                      const obLow = Math.min(candles[obIdx].low, candles[obIdx].open);
+                      
+                      // Check if current price is mitigating the OB
+                      let hasRetest = false;
+                      let invalidated = false;
+                      for (let j = mssCandleIdx + 1; j < candles.length; j++) {
+                          if (candles[j].high >= obLow) hasRetest = true;
+                          if (candles[j].close > obHigh) invalidated = true; // OB failed
+                      }
+                      
+                      if (hasRetest && !invalidated) {
+                         // Strict HTF Filter Checks
+                         const isHTFAligned = htf.trend === "BEARISH";
+                         const hasHTFFuel = htf.fuel.includes("Bearish") || htf.fuel.includes("High");
+                         
+                         if (!isHTFAligned || !htf.hasFuel || !hasHTFFuel) {
+                             logs.push(`[${pair}] Bearish setup filtered out by HTF checks (Trend: ${htf.trend}, Fuel: ${htf.fuel})`);
+                             break;
+                         }
+
+                         const rr = 3.0; 
+                         const sl = obHigh + (obHigh * 0.002); 
+                         const tp = currentPrice - (Math.abs(sl - currentPrice) * rr);
+                         
+                         const { pocPrice } = calculateVolumeProfile(candles, 50);
+                         const volumeProfileConfirmed = currentPrice < pocPrice;
+                         
+                         let orderFlowConfirmed = false;
+                         let takerBuyVol = 0; let takerSellVol = 0;
+                         for (let j = Math.max(0, candles.length - 5); j < candles.length; j++) {
+                             const c = candles[j];
+                             if (c.takerBuyBaseVolume !== undefined && c.volume !== undefined) {
+                                 takerBuyVol += c.takerBuyBaseVolume;
+                                 takerSellVol += (c.volume - c.takerBuyBaseVolume);
+                             }
+                         }
+                         if (takerBuyVol > 0 || takerSellVol > 0) {
+                             orderFlowConfirmed = takerSellVol > takerBuyVol;
+                         } else {
+                             const recentRed = candles.slice(-5).filter(c => c.close < c.open).length;
+                             orderFlowConfirmed = recentRed >= 3;
+                         }
+
+                         if (!orderFlowConfirmed) {
+                             logs.push(`[${pair}] Bearish setup filtered out: Order flow did not confirm (Sell Vol: ${takerSellVol.toFixed(2)}, Buy Vol: ${takerBuyVol.toFixed(2)})`);
+                             break;
+                         }
+
+                         if (!volumeProfileConfirmed) {
+                             logs.push(`[${pair}] Bearish setup filtered out: Volume profile did not confirm (Current Price: ${currentPrice.toFixed(5)} >= POC: ${pocPrice.toFixed(5)})`);
+                             break;
+                         }
+
+                         bestSignal = {
+                            pair, name: pair, type, action: "SELL",
+                            entryZone: [obLow, obHigh], stopLoss: sl, takeProfit: tp, currentPrice,
+                            confidence: 95, time: candles[candles.length - 1].time, rrRatio: rr,
+                            layer1Bias: `HTF: ${htf.trend} | LTF: ${activeTimeframe.toUpperCase()} BEARISH`,
+                            layer2Zone: `Bearish Order Block @ ${obLow.toFixed(5)} - ${obHigh.toFixed(5)}`,
+                            layer25RR: `Target: ${tp.toFixed(5)} | Stop: ${sl.toFixed(5)}`,
+                            layer3Confirm: `Liquidity Swept & MSS Confirmed`,
+                            layer4Filter: `DOL: ${htf.dol} | Fuel: ${htf.fuel}`,
+                            layer5Exec: `Triggered`,
+                            volumeProfileConfirmed,
+                            hvnPrice: pocPrice,
+                            orderFlowConfirmed
+                         };
+                         break;
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+  // 2. Look for Bullish Setup (Buy)
+  if (!bestSignal) {
+      for (let i = swings.lows.length - 1; i >= 1; i--) {
+          const currentLow = swings.lows[i];
+          const prevLow = swings.lows[i - 1]; // Previous low to sweep
+          
+          // Check if currentLow swept the prevLow
+          if (currentLow.val < prevLow.val) {
+              // Swept liquidity. Look for MSS
+              let interveningHighIdx = -1;
+              let interveningHighVal = -Infinity;
+              for (let j = prevLow.idx; j < currentLow.idx; j++) {
+                  if (candles[j].high > interveningHighVal) {
+                      interveningHighVal = candles[j].high;
+                      interveningHighIdx = j;
+                  }
+              }
+              
+              if (interveningHighIdx !== -1) {
+                  // Find if price broke above this intervening high (MSS) after currentLow
+                  let mssCandleIdx = -1;
+                  for (let j = currentLow.idx + 1; j < candles.length - 1; j++) {
+                      if (candles[j].close > interveningHighVal) {
+                          mssCandleIdx = j;
+                          break;
+                      }
+                  }
+                  
+                  if (mssCandleIdx !== -1) {
+                      // MSS confirmed! Now find the Bullish OB
+                      let obIdx = -1;
+                      for (let j = currentLow.idx; j <= mssCandleIdx; j++) {
+                          if (candles[j].close < candles[j].open) { // Bearish candle
+                              obIdx = j;
+                          } else if (obIdx !== -1) {
+                              break;
+                          }
+                      }
+                      
+                      if (obIdx !== -1) {
+                          const obLow = candles[obIdx].low;
+                          const obHigh = Math.max(candles[obIdx].high, candles[obIdx].open);
+                          
+                          let hasRetest = false;
+                          let invalidated = false;
+                          for (let j = mssCandleIdx + 1; j < candles.length; j++) {
+                              if (candles[j].low <= obHigh) hasRetest = true;
+                              if (candles[j].close < obLow) invalidated = true; // OB failed
+                          }
+                          
+                          if (hasRetest && !invalidated) {
+                             // Strict HTF Filter Checks
+                             const isHTFAligned = htf.trend === "BULLISH";
+                             const hasHTFFuel = htf.fuel.includes("Bullish") || htf.fuel.includes("High");
+                             
+                             if (!isHTFAligned || !htf.hasFuel || !hasHTFFuel) {
+                                 logs.push(`[${pair}] Bullish setup filtered out by HTF checks (Trend: ${htf.trend}, Fuel: ${htf.fuel})`);
+                                 break;
+                             }
+
+                             const rr = 3.0; 
+                             const slPrice = obLow - (obLow * 0.002); 
+                             const tp = currentPrice + (Math.abs(slPrice - currentPrice) * rr);
+                             
+                             const { pocPrice } = calculateVolumeProfile(candles, 50);
+                             const volumeProfileConfirmed = currentPrice > pocPrice;
+                             
+                             let orderFlowConfirmed = false;
+                             let takerBuyVol = 0; let takerSellVol = 0;
+                             for (let j = Math.max(0, candles.length - 5); j < candles.length; j++) {
+                                 const c = candles[j];
+                                 if (c.takerBuyBaseVolume !== undefined && c.volume !== undefined) {
+                                     takerBuyVol += c.takerBuyBaseVolume;
+                                     takerSellVol += (c.volume - c.takerBuyBaseVolume);
+                                 }
+                             }
+                             if (takerBuyVol > 0 || takerSellVol > 0) {
+                                 orderFlowConfirmed = takerBuyVol > takerSellVol;
+                             } else {
+                                 const recentGreen = candles.slice(-5).filter(c => c.close > c.open).length;
+                                 orderFlowConfirmed = recentGreen >= 3;
+                             }
+
+                             if (!orderFlowConfirmed) {
+                                 logs.push(`[${pair}] Bullish setup filtered out: Order flow did not confirm (Buy Vol: ${takerBuyVol.toFixed(2)}, Sell Vol: ${takerSellVol.toFixed(2)})`);
+                                 break;
+                             }
+
+                             if (!volumeProfileConfirmed) {
+                                 logs.push(`[${pair}] Bullish setup filtered out: Volume profile did not confirm (Current Price: ${currentPrice.toFixed(5)} <= POC: ${pocPrice.toFixed(5)})`);
+                                 break;
+                             }
+
+                             bestSignal = {
+                                pair, name: pair, type, action: "BUY",
+                                entryZone: [obLow, obHigh], stopLoss: slPrice, takeProfit: tp, currentPrice,
+                                confidence: 95, time: candles[candles.length - 1].time, rrRatio: rr,
+                                layer1Bias: `HTF: ${htf.trend} | LTF: ${activeTimeframe.toUpperCase()} BULLISH`,
+                                layer2Zone: `Bullish Order Block @ ${obLow.toFixed(5)} - ${obHigh.toFixed(5)}`,
+                                layer25RR: `Target: ${tp.toFixed(5)} | Stop: ${slPrice.toFixed(5)}`,
+                                layer3Confirm: `Liquidity Swept & MSS Confirmed`,
+                                layer4Filter: `DOL: ${htf.dol} | Fuel: ${htf.fuel}`,
+                                layer5Exec: `Triggered`,
+                                volumeProfileConfirmed,
+                                hvnPrice: pocPrice,
+                                orderFlowConfirmed
+                             };
+                             break;
+                          }
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+  return { signal: bestSignal, logs };
+}
+function analyzeHTF(candles1d: Candle[]) {
+    if (candles1d.length < 5) return { trend: "NEUTRAL", dol: "Unknown", fuel: "Unknown", hasFuel: false };
+    
+    const swings1d = findSwings(candles1d, 3); 
+    let trend = "NEUTRAL";
+    if (swings1d.highs.length >= 2 && swings1d.lows.length >= 2) {
+        const lastHigh = swings1d.highs[swings1d.highs.length - 1];
+        const prevHigh = swings1d.highs[swings1d.highs.length - 2];
+        const lastLow = swings1d.lows[swings1d.lows.length - 1];
+        const prevLow = swings1d.lows[swings1d.lows.length - 2];
+        
+        if (lastHigh.val > prevHigh.val && lastLow.val > prevLow.val) trend = "BULLISH";
+        else if (lastHigh.val < prevHigh.val && lastLow.val < prevLow.val) trend = "BEARISH";
+        else trend = "CONSOLIDATING";
+    }
+
+    let nextDOL = "Unknown";
+    let distToDOL = 0;
+    const currentPrice = candles1d[candles1d.length - 1].close;
+    
+    if (trend === "BULLISH") {
+        let targetHigh = swings1d.highs.find(h => h.val > currentPrice);
+        if (targetHigh) {
+            nextDOL = `1D High @ ${targetHigh.val.toFixed(5)}`;
+            distToDOL = targetHigh.val - currentPrice;
+        } else {
+            nextDOL = "Price Discovery";
+            distToDOL = 999;
+        }
+    } else if (trend === "BEARISH") {
+        let targetLow = swings1d.lows.find(l => l.val < currentPrice);
+        if (targetLow) {
+            nextDOL = `1D Low @ ${targetLow.val.toFixed(5)}`;
+            distToDOL = currentPrice - targetLow.val;
+        } else {
+            nextDOL = "Price Discovery";
+            distToDOL = 999;
+        }
+    }
+    
+    let fuel = "Low (Small Imbalances)";
+    for (let i = Math.max(1, candles1d.length - 10); i < candles1d.length - 1; i++) {
+        const c1 = candles1d[i-1];
+        const c3 = candles1d[i+1];
+        if (!c1 || !c3) continue;
+        if (c1.high < c3.low) {
+            const gap = c3.low - c1.high;
+            if (gap > currentPrice * 0.005) { fuel = "High (Bullish 1D FVG)"; } 
+        }
+        if (c1.low > c3.high) {
+            const gap = c1.low - c3.high;
+            if (gap > currentPrice * 0.005) { fuel = "High (Bearish 1D FVG)"; }
+        }
+    }
+    
+    const hasFuel = trend !== "CONSOLIDATING" && distToDOL > (currentPrice * 0.005);
+    return { trend, dol: nextDOL, fuel, hasFuel };
+}
+
+function findSwings(candles: Candle[], lookback: number) {
+    const highs = [];
+    const lows = [];
+    for(let i=lookback; i<candles.length-lookback; i++) {
+        let isHigh = true, isLow = true;
+        for(let j=1; j<=lookback; j++) {
+            if (candles[i-j].high >= candles[i].high || candles[i+j].high >= candles[i].high) isHigh = false;
+            if (candles[i-j].low <= candles[i].low || candles[i+j].low <= candles[i].low) isLow = false;
+        }
+        if (isHigh) highs.push({ idx: i, val: candles[i].high });
+        if (isLow) lows.push({ idx: i, val: candles[i].low });
+    }
+    return { highs, lows };
+}
+
+let activeTimeframe = "30m";
+let isScanning = false;
+let cachedSignals: Signal[] = [];
+let cachedAllLogs: string[] = [];
+let lastScanTime = 0;
+let marketStatusCache = "OPEN";
+let totalScannedCache = 0;
+
+interface CandleCache {
+  candles1h: Candle[];
+  candles5m: Candle[];
+  candles1m: Candle[];
+}
+const marketCache: Record<string, CandleCache> = {};
+let lastYahooChartFetch = 0;
+const YAHOO_CHART_INTERVAL = 60 * 60 * 1000; // 1 hour for full chart fetch to avoid rate limit
+
+// Use persistent connections to speed up Binance API requests significantly
+import http from "http";
+import https from "https";
+const axiosInstance = axios.create({
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ keepAlive: true }),
+});
+
+async function runBackgroundScan() {
+  if (isScanning) return;
+  isScanning = true;
+  try {
+    const newSignals: Signal[] = [];
+    const newLogs: string[] = [];
+    
+    const isWeekend = false;
+    marketStatusCache = "OPEN";
+
+    // 1. Fetch Crypto Klines (Binance)
+    console.log("[Scanner] Fetching historical charts for Crypto...");
+            let cryptoPromise = Promise.resolve();
+    console.log("[Scanner] Fetching historical charts for Crypto...");
+    let cIndex = 0;
+    let activeCrypto = 0;
+    cryptoPromise = new Promise(resolve => {
+      const next = async () => {
+        if (cIndex >= CRYPTO_PAIRS.length) {
+          if (activeCrypto === 0) resolve(undefined);
+          return;
+        }
+        activeCrypto++;
+        const pair = CRYPTO_PAIRS[cIndex++];
+        try {
+          const [resLTF, res1D] = await Promise.all([
+            axiosInstance.get(`https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${activeTimeframe}&limit=1000`),
+            axiosInstance.get(`https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1d&limit=100`)
+          ]);
+          const mapCandle = (d) => ({
+            time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]),
+            close: parseFloat(d[4]), volume: parseFloat(d[5]), takerBuyBaseVolume: parseFloat(d[9]),
+          });
+          const candles = resLTF.data.map(mapCandle);
+          const candles1d = res1D.data.map(mapCandle);
+          let displayPair = pair.replace("USDT", "USD");
+          const { signal, logs } = analyzeMarketStructure(candles, candles1d, displayPair, "Crypto");
+          newLogs.push(...logs);
+          if (signal) newSignals.push(signal);
+        } catch (err) {
+          console.error(`Failed to fetch crypto ${pair}:`, err.message || String(err));
+        } finally {
+          activeCrypto--;
+          setTimeout(next, 100);
+        }
+      };
+            next(); next(); next();
+    });
+
+    // 2. Fetch Yahoo Finance (Forex/Commodities/Indices/Stocks)
+            let yahooPairs = [
+      ...FOREX_PAIRS.map(p => ({ pair: p, type: "Forex" })),
+      ...COMMODITY_PAIRS.map(p => ({ pair: p, type: "Commodity" })),
+      ...INDEX_PAIRS.map(p => ({ pair: p, type: "Index" })),
+      ...STOCK_PAIRS.map(p => ({ pair: p, type: "Stock" }))
+    ];
+
+
+    const fetchYahooChart = async (pair: string, type: string) => {
+      try {
+        const queryOptions30m: any = { period1: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), interval: activeTimeframe };
+        const queryOptions1d: any = { period1: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000), interval: '1d' };
+        
+        const [result30m, result1d] = await Promise.all([
+            (yahooFinance.chart(pair, queryOptions30m as any) as Promise<any>).catch(() => ({ quotes: [] })),
+            (yahooFinance.chart(pair, queryOptions1d as any) as Promise<any>).catch(() => ({ quotes: [] }))
+        ]);
+        const quotes30m: any[] = result30m.quotes as any;
+        const quotes1d: any[] = result1d.quotes as any;
+        if (!quotes30m || quotes30m.length === 0) return;
+
+        const parseQuotes = (quotes: any[]) => {
+          const candles: Candle[] = [];
+          for (const quote of quotes) {
+            if (!quote.open || !quote.high || !quote.low || !quote.close) continue;
+            candles.push({
+              time: quote.date.getTime(), open: quote.open, high: quote.high,
+              low: quote.low, close: quote.close, volume: quote.volume || 0
+            });
+          }
+          return candles;
+        };
+
+        const candles = parseQuotes(quotes30m);
+        const candles1d = parseQuotes(quotes1d || []);
+
+        let displayPair = pair.replace("=X", "").replace("-USD", "USD").replace(/^/g, "").toUpperCase();
+        if (type === "Commodity") {
+            const commMap: Record<string, string> = { "GC": "GOLD", "SI": "SILVER", "CL": "WTI", "NG": "NATGAS" };
+            for(const [k, v] of Object.entries(commMap)) { if (displayPair.startsWith(k)) displayPair = v; }
+        } else if (type === "Index") {
+            if (displayPair.includes("GSPC")) displayPair = "SPX";
+            if (displayPair.includes("IXIC")) displayPair = "NDX";
+            if (displayPair.includes("DJI")) displayPair = "US30";
+        }
+
+        const { signal, logs } = analyzeMarketStructure(candles, candles1d, displayPair, type);
+        newLogs.push(...logs);
+        if (signal) newSignals.push(signal);
+
+      } catch (err) {
+      }
+    };
+
+    let yahooPromise = Promise.resolve();
+    if (!isWeekend) {
+        console.log(`[Scanner] Fetching historical charts for Yahoo Finance (${yahooPairs.length} pairs)...`);
+                let yIndex = 0;
+        let active = 0;
+        yahooPromise = new Promise(resolve => {
+            const next = () => {
+                if (yIndex >= yahooPairs.length) {
+                    if (active === 0) resolve(undefined);
+                    return;
+                }
+                active++;
+                const item = yahooPairs[yIndex++];
+                fetchYahooChart(item.pair, item.type).finally(() => {
+                    active--;
+                    setTimeout(next, 200);
+                });
+            };
+            next(); next(); next();
+        });
+    }
+
+    await Promise.all([cryptoPromise, yahooPromise]);
+
+    cachedSignals = newSignals;
+    cachedAllLogs = newLogs;
+    totalScannedCache = CRYPTO_PAIRS.length + (isWeekend ? 0 : yahooPairs.length);
+    lastScanTime = Date.now();
+    console.log(`[Scanner] Background scan completed. Found ${cachedSignals.length} signals.`);
+  } catch (err) {
+    console.error("[Scanner] Background scan failed:", err);
+  } finally {
+    isScanning = false;
+  }
+}
+
+// API Route triggers scan on request
+app.get("/api/scan", async (req, res) => {
+  try {
+    const timeframeQuery = req.query.timeframe as string;
+    if (timeframeQuery && ["30m", "1h", "4h"].includes(timeframeQuery)) {
+        if (activeTimeframe !== timeframeQuery) {
+            activeTimeframe = timeframeQuery;
+            cachedSignals = []; // clear old timeframe signals
+        }
+    }
+
+    if (!isScanning) {
+        await runBackgroundScan(); // wait for scan to finish
+    } else {
+        // Wait for current scan to finish
+        while (isScanning) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    const assetsQuery = req.query.assets as string | undefined;
+    let selectedAssets: string[];
+    if (assetsQuery === undefined) {
+      selectedAssets = ['crypto', 'forex', 'commodity', 'index', 'stock'];
+    } else if (assetsQuery === "") {
+      selectedAssets = [];
+    } else {
+      selectedAssets = assetsQuery.toLowerCase().split(',');
+    }
+
+    // Filter signals based on requested asset types
+    const filteredSignals = cachedSignals.filter(s => selectedAssets.includes(s.type.toLowerCase()));
+    
+    // Calculate total scanned based on requested types
+    let totalScanned = 0;
+    if (selectedAssets.includes('crypto')) totalScanned += CRYPTO_PAIRS.length;
+    if (marketStatusCache !== "WEEKEND_CRYPTO_ONLY") {
+      if (selectedAssets.includes('forex')) totalScanned += FOREX_PAIRS.length;
+      if (selectedAssets.includes('commodity')) totalScanned += COMMODITY_PAIRS.length;
+      if (selectedAssets.includes('index')) totalScanned += INDEX_PAIRS.length;
+      if (selectedAssets.includes('stock')) totalScanned += STOCK_PAIRS.length;
+    }
+
+    res.json({
+      success: true,
+      bestSignal: filteredSignals.length > 0 ? filteredSignals[0] : null,
+      allSignals: filteredSignals.slice(0, 15),
+      totalScanned: totalScanned,
+      marketStatus: marketStatusCache,
+      debugLogs: cachedAllLogs.slice(0, 100), // return subset to save bandwidth
+      lastScanTime: lastScanTime,
+      scanningNow: isScanning
+    });
+
+  } catch (err) {
+    console.error("Scan error:", err);
+    res.status(500).json({ success: false, error: "Failed to scan markets." });
+  }
+});
+
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
